@@ -12,9 +12,6 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-logging.info("BOT STARTING...")
-logging.info(f"ADMIN_ID loaded: {ADMIN_ID}, BOT_TOKEN present: {bool(BOT_TOKEN)}")
-
 if not BOT_TOKEN or not ADMIN_ID:
     raise RuntimeError("BOT_TOKEN ve/veya ADMIN_ID environment variable eksik.")
 
@@ -31,7 +28,6 @@ def db_init():
     """)
     conn.commit()
     conn.close()
-    logging.info("DB initialized.")
 
 def db_put(admin_msg_id: int, user_id: int):
     conn = sqlite3.connect(DB_PATH)
@@ -42,7 +38,6 @@ def db_put(admin_msg_id: int, user_id: int):
     )
     conn.commit()
     conn.close()
-    logging.info(f"Mapped admin_msg_id={admin_msg_id} -> user_id={user_id}")
 
 def db_get(admin_msg_id: int):
     conn = sqlite3.connect(DB_PATH)
@@ -56,24 +51,19 @@ def db_get(admin_msg_id: int):
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# 👇 BURAYA İSTEDİĞİN MESAJ YAZILIYOR
 WELCOME_TEXT = (
-    "👑 isim soyisimden TC KİMLİK İKAMET, aile soy ağacı bilgileri
-    👑 Numaradan TC isim soyisim istenilen tüm bilgiler
-    👑 Kişiden Tapu Bilgileri (33 il 98 milyon Veri)
-👑 Ada Parselden Şahıs Bilgileri (33 il 98 milyon Veri)
-👑 Kişiden Güncel ve Geçmiş Adres Bilgileri
-👑 Plakadan Şahıs, Numara, Adres, Araç Bilgileri
-👑 Kişiden Araç Bilgileri
-👑 Kişiden Aynı İkamet Eden Hane Bilgileri
-👑 Kişiden Aynı Sokak, Mahalle, Apartman Bilgileri
-👑 Kişiden Ehliyet Vesika Bilgileri
-👑 Kişiden Detaylı Numara Bilgileri
-👑 Numaradan Detaylı Kişi Bilgileri
-👑 Kişiden Detaylı Askerlik Durum Bilgileri
-👑 Ve burada olmayan +30 özellik (IBAN sorgu, aile vesika sorgu, log çekme vb.)
-)"
+    "👋 Merhaba, size her türlü destek sağlayabilirim.\n\n"
+    "📌 isim soyisimden TC KİMLİK İKAMET, aile soy ağacı bilgileri"
+    "📌  Numaradan TC isim soyisim istenilen tüm bilgiler\n"
+    "📌  Ada Parselden Şahıs Bilgileri (33 il 98 milyon Veri)\n"
+    "📌 Kişiden Güncel ve Geçmiş Adres Bilgileri\n"
+    "📌 Plakadan Şahıs, Numara, Adres, Araç Bilgileri\n"
+    "📌 Ve burada olmayan +30 özellik (IBAN sorgu, aile vesika sorgu, log çekme vb.)\n\n"
+    "Detayları mesaj olarak yazmanız yeterlidir."
+)
 
-# 1) Kullanıcı /start -> otomatik cevap + admin'e forward
+# /start komutu
 @dp.message(CommandStart(), F.from_user.id != ADMIN_ID)
 async def start_handler(message: Message):
     await message.answer(WELCOME_TEXT)
@@ -85,7 +75,7 @@ async def start_handler(message: Message):
     )
     db_put(forwarded.message_id, message.from_user.id)
 
-# 2) Kullanıcıdan gelen diğer her şey -> admin'e forward
+# Kullanıcıdan gelen diğer mesajlar
 @dp.message(F.from_user.id != ADMIN_ID)
 async def user_to_admin(message: Message):
     forwarded = await bot.forward_message(
@@ -95,14 +85,14 @@ async def user_to_admin(message: Message):
     )
     db_put(forwarded.message_id, message.from_user.id)
 
-# 3) Admin reply -> kullanıcıya geri gönder
+# Admin reply yapınca kullanıcıya geri gönder
 @dp.message((F.from_user.id == ADMIN_ID) & (F.reply_to_message))
 async def admin_reply_to_user(message: Message):
     replied_admin_msg_id = message.reply_to_message.message_id
     user_id = db_get(replied_admin_msg_id)
 
     if not user_id:
-        await message.answer("Bu mesaja ait kullanıcı bulunamadı. (Eşleştirme yok)")
+        await message.answer("Bu mesaja ait kullanıcı bulunamadı.")
         return
 
     await bot.copy_message(
@@ -113,7 +103,6 @@ async def admin_reply_to_user(message: Message):
 
 async def main():
     db_init()
-    logging.info("Start polling...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
