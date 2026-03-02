@@ -5,16 +5,19 @@ import asyncio
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
+from aiogram.filters import CommandStart
 
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
+logging.info("BOT STARTING...")
+logging.info(f"ADMIN_ID loaded: {ADMIN_ID}, BOT_TOKEN present: {bool(BOT_TOKEN)}")
+
 if not BOT_TOKEN or not ADMIN_ID:
     raise RuntimeError("BOT_TOKEN ve/veya ADMIN_ID environment variable eksik.")
 
-# Basit ve sağlam eşleştirme için SQLite (restart olursa da mapping kaybolmaz)
 DB_PATH = "relay.db"
 
 def db_init():
@@ -28,6 +31,7 @@ def db_init():
     """)
     conn.commit()
     conn.close()
+    logging.info("DB initialized.")
 
 def db_put(admin_msg_id: int, user_id: int):
     conn = sqlite3.connect(DB_PATH)
@@ -38,6 +42,7 @@ def db_put(admin_msg_id: int, user_id: int):
     )
     conn.commit()
     conn.close()
+    logging.info(f"Mapped admin_msg_id={admin_msg_id} -> user_id={user_id}")
 
 def db_get(admin_msg_id: int):
     conn = sqlite3.connect(DB_PATH)
@@ -51,26 +56,48 @@ def db_get(admin_msg_id: int):
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-@dp.message(F.from_user.id != ADMIN_ID)
-async def user_to_admin(message: Message):
-    """
-    Kullanıcı -> Admin:
-    Mesajı admin'e forward eder ve forward edilen mesajın ID'si ile kullanıcı ID'sini DB'ye yazar.
-    """
+WELCOME_TEXT = (
+    "👑 isim soyisimden TC KİMLİK İKAMET, aile soy ağacı bilgileri
+    👑 Numaradan TC isim soyisim istenilen tüm bilgiler
+    👑 Kişiden Tapu Bilgileri (33 il 98 milyon Veri)
+👑 Ada Parselden Şahıs Bilgileri (33 il 98 milyon Veri)
+👑 Kişiden Güncel ve Geçmiş Adres Bilgileri
+👑 Plakadan Şahıs, Numara, Adres, Araç Bilgileri
+👑 Kişiden Araç Bilgileri
+👑 Kişiden Aynı İkamet Eden Hane Bilgileri
+👑 Kişiden Aynı Sokak, Mahalle, Apartman Bilgileri
+👑 Kişiden Ehliyet Vesika Bilgileri
+👑 Kişiden Detaylı Numara Bilgileri
+👑 Numaradan Detaylı Kişi Bilgileri
+👑 Kişiden Detaylı Askerlik Durum Bilgileri
+👑 Ve burada olmayan +30 özellik (IBAN sorgu, aile vesika sorgu, log çekme vb.)
+)"
+
+# 1) Kullanıcı /start -> otomatik cevap + admin'e forward
+@dp.message(CommandStart(), F.from_user.id != ADMIN_ID)
+async def start_handler(message: Message):
+    await message.answer(WELCOME_TEXT)
+
     forwarded = await bot.forward_message(
         chat_id=ADMIN_ID,
         from_chat_id=message.chat.id,
         message_id=message.message_id
     )
-    # admin tarafında oluşan forwarded mesajın message_id'si ile kullanıcıyı eşle
     db_put(forwarded.message_id, message.from_user.id)
 
+# 2) Kullanıcıdan gelen diğer her şey -> admin'e forward
+@dp.message(F.from_user.id != ADMIN_ID)
+async def user_to_admin(message: Message):
+    forwarded = await bot.forward_message(
+        chat_id=ADMIN_ID,
+        from_chat_id=message.chat.id,
+        message_id=message.message_id
+    )
+    db_put(forwarded.message_id, message.from_user.id)
+
+# 3) Admin reply -> kullanıcıya geri gönder
 @dp.message((F.from_user.id == ADMIN_ID) & (F.reply_to_message))
 async def admin_reply_to_user(message: Message):
-    """
-    Admin reply -> Kullanıcı:
-    Admin'in reply yaptığı mesajın ID'sinden kullanıcıyı bulur ve admin mesajını kullanıcıya kopyalar.
-    """
     replied_admin_msg_id = message.reply_to_message.message_id
     user_id = db_get(replied_admin_msg_id)
 
@@ -78,15 +105,15 @@ async def admin_reply_to_user(message: Message):
         await message.answer("Bu mesaja ait kullanıcı bulunamadı. (Eşleştirme yok)")
         return
 
-    # Admin'in gönderdiği reply mesajını kullanıcıya aynen kopyala (text/media destekler)
     await bot.copy_message(
         chat_id=user_id,
-        from_chat_id=message.chat.id,   # admin chat
+        from_chat_id=message.chat.id,
         message_id=message.message_id
     )
 
 async def main():
     db_init()
+    logging.info("Start polling...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
