@@ -5,15 +5,16 @@ import asyncio
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart
 
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+FORUM_CHAT_ID = int(os.getenv("ADMIN_FORUM_CHAT_ID", "0"))  # -100... panel grup id
 
-if not BOT_TOKEN or not ADMIN_ID:
-    raise RuntimeError("BOT_TOKEN ve/veya ADMIN_ID environment variable eksik.")
+if not BOT_TOKEN or not ADMIN_ID or not FORUM_CHAT_ID:
+    raise RuntimeError("BOT_TOKEN / ADMIN_ID / ADMIN_FORUM_CHAT_ID eksik.")
 
 DB_PATH = "relay.db"
 
@@ -21,32 +22,43 @@ def db_init():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS relay_map (
-            admin_msg_id INTEGER PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS user_topic_map (
+            user_id INTEGER PRIMARY KEY,
+            topic_id INTEGER NOT NULL
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS topic_user_map (
+            topic_id INTEGER PRIMARY KEY,
             user_id INTEGER NOT NULL
         )
     """)
     conn.commit()
     conn.close()
 
-def db_put(admin_msg_id: int, user_id: int):
+def db_get_topic(user_id: int):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute(
-        "INSERT OR REPLACE INTO relay_map (admin_msg_id, user_id) VALUES (?, ?)",
-        (admin_msg_id, user_id)
-    )
-    conn.commit()
-    conn.close()
-
-def db_get(admin_msg_id: int):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT user_id FROM relay_map WHERE admin_msg_id = ?", (admin_msg_id,))
+    cur.execute("SELECT topic_id FROM user_topic_map WHERE user_id = ?", (user_id,))
     row = cur.fetchone()
     conn.close()
     return row[0] if row else None
 
+def db_get_user(topic_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT user_id FROM topic_user_map WHERE topic_id = ?", (topic_id,))
+    row = cur.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def db_set(user_id: int, topic_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("INSERT OR REPLACE INTO user_topic_map (user_id, topic_id) VALUES (?, ?)", (user_id, topic_id))
+    cur.execute("INSERT OR REPLACE INTO topic_user_map (topic_id, user_id) VALUES (?, ?)", (topic_id, user_id))
+    conn.commit()
+    conn.close()
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -62,44 +74,59 @@ WELCOME_TEXT = (
     "Detayları mesaj olarak yazmanız yeterlidir."
 )
 
-# ✅ Panel grubunun Chat ID'sini öğrenmek için (sadece admin)
-@dp.message(Command("panelid"), F.from_user.id == ADMIN_ID)
-async def panel_id(message: Message):
-    await message.answer(
-        f"✅ PANEL CHAT ID: {message.chat.id}\n"
-        f"🧵 THREAD ID: {message.message_thread_id}"
+async def ensure_topic_for_user(user_id: int, user_name: str) -> int:
+    topic_id = db_get_topic(user_id)
+    if topic_id:
+        return topic_id
+
+    title = f"{user_name} ({user_id})"
+    created = await bot.create_forum_topic(chat_id=FORUM_CHAT_ID, name=title)
+    topic_id = created.message_thread_id
+    db_set(user_id, topic_id)
+
+    await bot.send_message(
+        chat_id=FORUM_CHAT_ID,
+        message_thread_id=topic_id,
+        text=f"✅ Yeni kullanıcı: {user_name}\nUserID: {user_id}"
+    )
+    return topic_id
+
+async def send_user_message_to_topic(message: Message):
+    user_id = message.from_user.id
+    user_name = (message.from_user.full_name or "Kullanıcı").strip()
+    topic_id = await ensure_topic_for_user(user_id, user_name)
+
+    await bot.copy_message(
+        chat_id=FORUM_CHAT_ID,
+        message_thread_id=topic_id,
+        from_chat_id=message.chat.id,
+        message_id=message.message_id
     )
 
-# /start komutu (kullanıcı)
+# Kullanıcı /start -> otomatik mesaj + panelde kendi konusuna düşsün
 @dp.message(CommandStart(), F.from_user.id != ADMIN_ID)
 async def start_handler(message: Message):
     await message.answer(WELCOME_TEXT)
+    await send_user_message_to_topic(message)
 
-    forwarded = await bot.forward_message(
-        chat_id=ADMIN_ID,
-        from_chat_id=message.chat.id,
-        message_id=message.message_id
-    )
-    db_put(forwarded.message_id, message.from_user.id)
-
-# Kullanıcıdan gelen diğer mesajlar -> admin'e forward
+# Kullanıcının diğer tüm mesajları -> panelde kendi konusuna
 @dp.message(F.from_user.id != ADMIN_ID)
-async def user_to_admin(message: Message):
-    forwarded = await bot.forward_message(
-        chat_id=ADMIN_ID,
-        from_chat_id=message.chat.id,
-        message_id=message.message_id
-    )
-    db_put(forwarded.message_id, message.from_user.id)
+async def user_any_message(message: Message):
+    await send_user_message_to_topic(message)
 
-# Admin reply -> kullanıcıya geri gönder
-@dp.message((F.from_user.id == ADMIN_ID) & (F.reply_to_message))
-async def admin_reply_to_user(message: Message):
-    replied_admin_msg_id = message.reply_to_message.message_id
-    user_id = db_get(replied_admin_msg_id)
+# Admin panel grubunda, bir konu içinde yazarsa -> o konunun kullanıcısına gönder
+@dp.message(F.chat.id == FORUM_CHAT_ID)
+async def admin_from_forum(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
 
+    topic_id = message.message_thread_id
+    if not topic_id:
+        return
+
+    user_id = db_get_user(topic_id)
     if not user_id:
-        await message.answer("Bu mesaja ait kullanıcı bulunamadı.")
+        await message.reply("❌ Bu konuya bağlı kullanıcı bulunamadı.")
         return
 
     await bot.copy_message(
