@@ -5,7 +5,7 @@ import asyncio
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 
 logging.basicConfig(level=logging.INFO)
 
@@ -51,7 +51,6 @@ def db_get(admin_msg_id: int):
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# 👇 BURAYA İSTEDİĞİN MESAJ YAZILIYOR
 WELCOME_TEXT = (
     "👋 Merhaba, size her türlü destek sağlayabilirim.\n\n"
     "📌 isim soyisimden TC KİMLİK İKAMET, aile soy ağacı bilgileri\n"
@@ -63,7 +62,15 @@ WELCOME_TEXT = (
     "Detayları mesaj olarak yazmanız yeterlidir."
 )
 
-# /start komutu
+# ✅ Panel grubunun Chat ID'sini öğrenmek için (sadece admin)
+@dp.message(Command("panelid"), F.from_user.id == ADMIN_ID)
+async def panel_id(message: Message):
+    await message.answer(
+        f"✅ PANEL CHAT ID: {message.chat.id}\n"
+        f"🧵 THREAD ID: {message.message_thread_id}"
+    )
+
+# /start komutu (kullanıcı)
 @dp.message(CommandStart(), F.from_user.id != ADMIN_ID)
 async def start_handler(message: Message):
     await message.answer(WELCOME_TEXT)
@@ -75,7 +82,7 @@ async def start_handler(message: Message):
     )
     db_put(forwarded.message_id, message.from_user.id)
 
-# Kullanıcıdan gelen diğer mesajlar
+# Kullanıcıdan gelen diğer mesajlar -> admin'e forward
 @dp.message(F.from_user.id != ADMIN_ID)
 async def user_to_admin(message: Message):
     forwarded = await bot.forward_message(
@@ -85,7 +92,7 @@ async def user_to_admin(message: Message):
     )
     db_put(forwarded.message_id, message.from_user.id)
 
-# Admin reply yapınca kullanıcıya geri gönder
+# Admin reply -> kullanıcıya geri gönder
 @dp.message((F.from_user.id == ADMIN_ID) & (F.reply_to_message))
 async def admin_reply_to_user(message: Message):
     replied_admin_msg_id = message.reply_to_message.message_id
