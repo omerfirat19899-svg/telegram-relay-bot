@@ -54,7 +54,7 @@ dp = Dispatcher()
 # 👇 BURAYA İSTEDİĞİN MESAJ YAZILIYOR
 WELCOME_TEXT = (
     "👋 Merhaba, size her türlü destek sağlayabilirim.\n\n"
-    "📌 isim soyisimden TC KİMLİK İKAMET, aile soy ağacı bilgileri"
+    "📌 isim soyisimden TC KİMLİK İKAMET, aile soy ağacı bilgileri\n"
     "📌  Numaradan TC isim soyisim istenilen tüm bilgiler\n"
     "📌  Ada Parselden Şahıs Bilgileri (33 il 98 milyon Veri)\n"
     "📌 Kişiden Güncel ve Geçmiş Adres Bilgileri\n"
